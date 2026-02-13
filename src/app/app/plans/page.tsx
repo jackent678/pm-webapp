@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation";
 
 type EngineerRow = {
   id: string;
-  user_id: string | null; // ✅ 對應 auth.users.id
+  user_id: string | null;
   name: string;
   phone: string | null;
   is_active: boolean;
@@ -23,13 +23,14 @@ type ScheduleItemRow = {
   title: string;
   details: string | null;
   item_type: "work" | "leave" | "move";
-  // ✅ 原本用「優先度 1-3」，改為「6 階段進度」(1-6)
-  // 1~6 對應 Projects 的 6 個階段順序（硬體安裝定位 → ... → 教育訓練）
   priority: 1 | 2 | 3 | 4 | 5 | 6;
   sort_order: number;
   created_at: string;
   updated_at: string;
 };
+
+const VIEW_WEEKS = 4;
+const VIEW_DAYS = VIEW_WEEKS * 7;
 
 function toISODate(d: Date) {
   const yyyy = d.getFullYear();
@@ -60,7 +61,6 @@ function weekdayLabel(i: number) {
 function clampStage(n: number): 1 | 2 | 3 | 4 | 5 | 6 {
   if (n <= 1) return 1;
   if (n >= 6) return 6;
-  // 2~5
   return Math.round(n) as any;
 }
 
@@ -84,18 +84,19 @@ export default function PlansPage() {
   const [loading, setLoading] = useState(true);
   const [email, setEmail] = useState<string | null>(null);
 
-  const [weekStart, setWeekStart] = useState<Date>(() => startOfWeekMon(new Date()));
+  // ✅ 四週視圖起點：第一週的週一
+  const [viewStart, setViewStart] = useState<Date>(() => startOfWeekMon(new Date()));
 
   const [engineers, setEngineers] = useState<EngineerRow[]>([]);
   const [projects, setProjects] = useState<ProjectRow[]>([]);
   const [items, setItems] = useState<ScheduleItemRow[]>([]);
 
-  // ✅ auth / role / scope
+  // auth / role / scope
   const [myUserId, setMyUserId] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [myEngineerId, setMyEngineerId] = useState<string | null>(null);
 
-  // modal state
+  // modal
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formEngineerId, setFormEngineerId] = useState<string>("");
@@ -104,7 +105,6 @@ export default function PlansPage() {
   const [formProjectId, setFormProjectId] = useState<string | "">("");
   const [formTitle, setFormTitle] = useState<string>("");
   const [formDetails, setFormDetails] = useState<string>("");
-  // ✅ 1~6：6 階段進度
   const [formPriority, setFormPriority] = useState<1 | 2 | 3 | 4 | 5 | 6>(1);
   const [saving, setSaving] = useState(false);
 
@@ -121,7 +121,6 @@ export default function PlansPage() {
     return user;
   }
 
-  // ✅ 讀取登入者 / admin 判斷（app_metadata.role === "admin"）
   async function loadAuthContext() {
     const { data, error } = await supabase.auth.getUser();
     if (error) throw new Error(error.message);
@@ -144,19 +143,15 @@ export default function PlansPage() {
     return { user, uid, admin };
   }
 
-  // ✅ 確保「目前登入者」在 engineers 有一筆資料（非 admin 才需要）
   async function ensureMyEngineerRow(userId: string, fallbackEmail?: string | null) {
-    // 1) 先拿 profiles.name
     const { data: prof, error: pErr } = await supabase.from("profiles").select("name").eq("id", userId).maybeSingle();
     if (pErr) throw new Error(pErr.message);
 
     const displayName = (prof?.name ?? fallbackEmail ?? "未命名").toString();
 
-    // 2) 是否已有 engineer.user_id = userId
     const { data: eng, error: eErr } = await supabase.from("engineers").select("id").eq("user_id", userId).maybeSingle();
     if (eErr) throw new Error(eErr.message);
 
-    // 3) 沒有就建立
     if (!eng) {
       const { error: iErr } = await supabase.from("engineers").insert({
         user_id: userId,
@@ -169,7 +164,6 @@ export default function PlansPage() {
   }
 
   async function loadEngineers(admin: boolean, uid: string) {
-    // ✅ RLS 會擋，但前端也加條件：非 admin 只拿自己的（省流量）
     let q = supabase
       .from("engineers")
       .select("id,user_id,name,phone,is_active")
@@ -184,11 +178,9 @@ export default function PlansPage() {
     const list = (data ?? []) as EngineerRow[];
     setEngineers(list);
 
-    // ✅ 非 admin：記下自己的 engineer_id（通常一筆）
     if (!admin) {
       const my = list[0]?.id ?? null;
       setMyEngineerId(my);
-      // 如果 modal 沒開/或尚未選工程師，就直接綁定自己
       setFormEngineerId((prev) => prev || (my ?? ""));
     } else {
       setMyEngineerId(null);
@@ -203,9 +195,10 @@ export default function PlansPage() {
     setProjects((data ?? []) as ProjectRow[]);
   }
 
-  async function loadScheduleForWeek(ws: Date, admin: boolean, myEngId: string | null) {
-    const start = toISODate(ws);
-    const end = toISODate(addDays(ws, 7)); // exclusive
+  // ✅ 載入四週（28天）資料
+  async function loadScheduleForRange(startDate: Date, admin: boolean, myEngId: string | null) {
+    const start = toISODate(startDate);
+    const end = toISODate(addDays(startDate, VIEW_DAYS)); // exclusive
 
     let q = supabase
       .from("schedule_items")
@@ -217,7 +210,6 @@ export default function PlansPage() {
       .order("sort_order", { ascending: true })
       .order("created_at", { ascending: true });
 
-    // ✅ 非 admin：只載入自己的 schedule（更快；RLS 也會擋）
     if (!admin) {
       if (!myEngId) {
         setItems([]);
@@ -237,7 +229,6 @@ export default function PlansPage() {
     try {
       const { user, uid, admin } = await loadAuthContext();
 
-      // ✅ 一般使用者：確保 engineer row 存在
       if (!admin) {
         await ensureMyEngineerRow(uid, user.email ?? null);
       }
@@ -245,13 +236,12 @@ export default function PlansPage() {
       const eList = await loadEngineers(admin, uid);
       await loadProjects();
 
-      // ✅ 非 admin：用這次載入拿到的 engineer_id（避免 state 尚未同步）
       const myEngIdLocal = admin ? null : eList[0]?.id ?? null;
       if (!admin && !myEngIdLocal) {
         throw new Error("找不到你的工程師資料（engineers.user_id 未綁定或 is_active=false）");
       }
 
-      await loadScheduleForWeek(weekStart, admin, myEngIdLocal);
+      await loadScheduleForRange(viewStart, admin, myEngIdLocal);
     } catch (e: any) {
       setMsg("❌ " + (e?.message ?? "unknown"));
     } finally {
@@ -262,9 +252,13 @@ export default function PlansPage() {
   useEffect(() => {
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [weekStart]);
+  }, [viewStart]);
 
-  const days = useMemo(() => Array.from({ length: 7 }).map((_, i) => addDays(weekStart, i)), [weekStart]);
+  // ✅ 四個週起點（週一）
+  const weekStarts = useMemo(
+    () => Array.from({ length: VIEW_WEEKS }).map((_, w) => addDays(viewStart, w * 7)),
+    [viewStart]
+  );
 
   const projectName = useMemo(() => {
     const m = new Map<string, string>();
@@ -290,7 +284,6 @@ export default function PlansPage() {
   }
 
   function badgeColor(p: 1 | 2 | 3 | 4 | 5 | 6) {
-    // 6 階段用 6 色（只做視覺區分，不代表優先度高低）
     const palette = ["#ef4444", "#f97316", "#eab308", "#22c55e", "#06b6d4", "#3b82f6"];
     return palette[(p - 1) % palette.length];
   }
@@ -298,7 +291,6 @@ export default function PlansPage() {
   function openNew(engineerId: string, dateISO: string) {
     setEditingId(null);
 
-    // ✅ 非 admin：強制只能對自己的 engineer_id 新增
     const eid = isAdmin ? engineerId : myEngineerId ?? engineerId;
 
     setFormEngineerId(eid);
@@ -312,7 +304,6 @@ export default function PlansPage() {
   }
 
   function openEdit(it: ScheduleItemRow) {
-    // ✅ 非 admin：若不是自己的資料（理論上拿不到；但以防萬一）
     if (!isAdmin && myEngineerId && it.engineer_id !== myEngineerId) {
       setMsg("❌ 你沒有權限編輯別人的行程");
       return;
@@ -336,7 +327,6 @@ export default function PlansPage() {
     if (!formDate) return setMsg("❌ 未選日期");
     if (!formTitle.trim()) return setMsg("❌ 請輸入內容（title）");
 
-    // ✅ 非 admin：前端先擋（避免一直看到 RLS 錯誤）
     if (!isAdmin && myEngineerId && formEngineerId !== myEngineerId) {
       return setMsg("❌ 你只能新增/編輯自己的行程");
     }
@@ -352,7 +342,6 @@ export default function PlansPage() {
         title: formTitle.trim(),
         details: formDetails.trim() ? formDetails.trim() : null,
         item_type: formType,
-        // ✅ priority 欄位改存 1~6 階段
         priority: formPriority,
       };
 
@@ -369,9 +358,7 @@ export default function PlansPage() {
       }
 
       setOpen(false);
-
-      // ✅ 重新載入（依 admin/自己的範圍）
-      await loadScheduleForWeek(weekStart, isAdmin, myEngineerId);
+      await loadScheduleForRange(viewStart, isAdmin, myEngineerId);
       setMsg("✅ 已儲存");
     } catch (e: any) {
       setMsg("❌ 儲存失敗：" + (e?.message ?? "unknown"));
@@ -390,7 +377,6 @@ export default function PlansPage() {
     try {
       await ensureLoggedIn();
 
-      // ✅ 非 admin：前端先擋
       if (!isAdmin && myEngineerId && formEngineerId !== myEngineerId) {
         throw new Error("你只能刪除自己的行程");
       }
@@ -399,7 +385,7 @@ export default function PlansPage() {
       if (error) throw new Error(error.message);
 
       setOpen(false);
-      await loadScheduleForWeek(weekStart, isAdmin, myEngineerId);
+      await loadScheduleForRange(viewStart, isAdmin, myEngineerId);
       setMsg("✅ 已刪除");
     } catch (e: any) {
       setMsg("❌ 刪除失敗：" + (e?.message ?? "unknown"));
@@ -419,7 +405,7 @@ export default function PlansPage() {
           <div>
             <h1 style={styles.h1}>行程規劃</h1>
             <div style={styles.sub}>
-              週排班表（可編輯） · {email ?? ""}{" "}
+              四週排班表（可編輯）· {email ?? ""}{" "}
               <span style={{ marginLeft: 8, fontSize: 12, opacity: 0.75 }}>
                 {isAdmin ? "（管理員：全部）" : "（我的）"}
               </span>
@@ -427,14 +413,14 @@ export default function PlansPage() {
           </div>
 
           <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={() => setWeekStart((w) => addDays(w, -7))} style={styles.btn}>
-              ← 上一週
+            <button onClick={() => setViewStart((w) => addDays(w, -VIEW_DAYS))} style={styles.btn}>
+              ← 前四週
             </button>
-            <button onClick={() => setWeekStart(startOfWeekMon(new Date()))} style={styles.btn}>
+            <button onClick={() => setViewStart(startOfWeekMon(new Date()))} style={styles.btn}>
               本週
             </button>
-            <button onClick={() => setWeekStart((w) => addDays(w, 7))} style={styles.btn}>
-              下一週 →
+            <button onClick={() => setViewStart((w) => addDays(w, VIEW_DAYS))} style={styles.btn}>
+              後四週 →
             </button>
           </div>
         </div>
@@ -456,120 +442,130 @@ export default function PlansPage() {
             {loading ? (
               <div style={{ color: "#6b7280" }}>載入中...</div>
             ) : (
-              <div style={{ overflowX: "auto" }}>
-                <table style={styles.table}>
-                  <thead>
-                    <tr>
-                      <th style={styles.th}>工程師</th>
-                      {days.map((d, idx) => {
-                        const label = `${d.getMonth() + 1}月${d.getDate()}日`;
-                        const isWeekend = idx >= 5;
-                        return (
-                          <th key={idx} style={{ ...styles.th, color: isWeekend ? "#c11" : "#111" }}>
-                            <div style={{ fontWeight: 900 }}>{label}</div>
-                            <div style={{ fontSize: 12, opacity: 0.85 }}>{weekdayLabel(idx)}</div>
-                          </th>
-                        );
-                      })}
-                    </tr>
-                  </thead>
+              <div style={{ display: "grid", gap: 18 }}>
+                {weekStarts.map((ws, wIdx) => {
+                  const days7 = Array.from({ length: 7 }).map((_, i) => addDays(ws, i));
+                  const weekTitle = `${ws.getMonth() + 1}月${ws.getDate()}日 - ${
+                    days7[6].getMonth() + 1
+                  }月${days7[6].getDate()}日（第${wIdx + 1}週）`;
 
-                  <tbody>
-                    {engineers.length === 0 ? (
-                      <tr>
-                        <td colSpan={8} style={{ padding: 14, border: "1px solid #e5e7eb" }}>
-                          {isAdmin
-                            ? "（尚無工程師資料。請先在 engineers 表新增。）"
-                            : "（找不到你的工程師資料。請確認 engineers.user_id 已綁定你的帳號，且 is_active=true。）"}
-                        </td>
-                      </tr>
-                    ) : (
-                      engineers.map((eng) => (
-                        <tr key={eng.id}>
-                          <td style={styles.tdLeft}>
-                            <div style={{ fontWeight: 900 }}>{eng.name}</div>
-                            {eng.phone && <div style={{ fontSize: 12, opacity: 0.75 }}>{eng.phone}</div>}
-                          </td>
+                  return (
+                    <div key={wIdx} style={styles.weekBlock}>
+                      <div style={styles.weekTitle}>{weekTitle}</div>
 
-                          {days.map((d, idx) => {
-                            const dateISO = toISODate(d);
-                            const k = `${eng.id}__${dateISO}`;
-                            const list = itemsByCell.get(k) ?? [];
-                            return (
-                              <td
-                                key={idx}
-                                style={{
-                                  ...styles.tdCell,
-                                  background: cellBackground(list),
-                                  cursor: "pointer",
-                                }}
-                                onClick={() => openNew(eng.id, dateISO)}
-                                title={isAdmin ? "點一下新增行程" : "點一下新增我的行程"}
-                              >
-                                {list.length === 0 ? (
-                                  <div style={{ opacity: 0.35, fontSize: 12 }}>（空）</div>
-                                ) : (
-                                  <div style={{ display: "grid", gap: 8 }}>
-                                    {list.map((it) => (
-                                      <div
-                                        key={it.id}
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          openEdit(it);
-                                        }}
+                      <div style={{ overflowX: "auto" }}>
+                        <table style={styles.table}>
+                          <thead>
+                            <tr>
+                              <th style={styles.th}>工程師</th>
+                              {days7.map((d, idx) => {
+                                const label = `${d.getMonth() + 1}月${d.getDate()}日`;
+                                const isWeekend = idx >= 5;
+                                return (
+                                  <th key={idx} style={{ ...styles.th, color: isWeekend ? "#c11" : "#111" }}>
+                                    <div style={{ fontWeight: 900 }}>{label}</div>
+                                    <div style={{ fontSize: 12, opacity: 0.85 }}>{weekdayLabel(idx)}</div>
+                                  </th>
+                                );
+                              })}
+                            </tr>
+                          </thead>
+
+                          <tbody>
+                            {engineers.length === 0 ? (
+                              <tr>
+                                <td colSpan={8} style={{ padding: 14, border: "1px solid #e5e7eb" }}>
+                                  {isAdmin
+                                    ? "（尚無工程師資料。請先在 engineers 表新增。）"
+                                    : "（找不到你的工程師資料。請確認 engineers.user_id 已綁定你的帳號，且 is_active=true。）"}
+                                </td>
+                              </tr>
+                            ) : (
+                              engineers.map((eng) => (
+                                <tr key={eng.id}>
+                                  <td style={styles.tdLeft}>
+                                    <div style={{ fontWeight: 900 }}>{eng.name}</div>
+                                    {eng.phone && <div style={{ fontSize: 12, opacity: 0.75 }}>{eng.phone}</div>}
+                                  </td>
+
+                                  {days7.map((d, idx) => {
+                                    const dateISO = toISODate(d);
+                                    const k = `${eng.id}__${dateISO}`;
+                                    const list = itemsByCell.get(k) ?? [];
+
+                                    return (
+                                      <td
+                                        key={idx}
                                         style={{
-                                          border: "1px solid #e5e7eb",
-                                          borderRadius: 10,
-                                          padding: 10,
-                                          background: "#fff",
+                                          ...styles.tdCell,
+                                          background: cellBackground(list),
                                           cursor: "pointer",
                                         }}
-                                        title="點一下編輯"
+                                        onClick={() => openNew(eng.id, dateISO)}
+                                        title={isAdmin ? "點一下新增行程" : "點一下新增我的行程"}
                                       >
-                                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-                                          <div style={{ fontWeight: 900, fontSize: 13, whiteSpace: "pre-wrap" }}>
-                                            {it.title}
-                                          </div>
-                                          <div
-                                            style={{
-                                              width: 10,
-                                              height: 10,
-                                              borderRadius: 999,
-                                              marginTop: 3,
-                                              background: badgeColor(it.priority),
-                                              flex: "0 0 auto",
-                                            }}
-                                            title={`階段：${stageLabel(it.priority)}`}
-                                          />
-                                        </div>
+                                        {list.length === 0 ? (
+                                          <div style={{ opacity: 0.35, fontSize: 12 }}>（空）</div>
+                                        ) : (
+                                          <div style={{ display: "grid", gap: 8 }}>
+                                            {list.map((it) => (
+                                              <div
+                                                key={it.id}
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  openEdit(it);
+                                                }}
+                                                style={styles.itemCard}
+                                                title="點一下編輯"
+                                              >
+                                                <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                                                  <div style={{ fontWeight: 900, fontSize: 13, whiteSpace: "pre-wrap" }}>
+                                                    {it.title}
+                                                  </div>
+                                                  <div
+                                                    style={{
+                                                      width: 10,
+                                                      height: 10,
+                                                      borderRadius: 999,
+                                                      marginTop: 3,
+                                                      background: badgeColor(it.priority),
+                                                      flex: "0 0 auto",
+                                                    }}
+                                                    title={`階段：${stageLabel(it.priority)}`}
+                                                  />
+                                                </div>
 
-                                        <div style={{ marginTop: 4, fontSize: 12, opacity: 0.85 }}>
-                                          {it.item_type === "leave"
-                                            ? "休假"
-                                            : it.item_type === "move"
-                                            ? "移動"
-                                            : `${projectName(it.project_id)} · ${stageLabel(it.priority)}`}
-                                        </div>
+                                                <div style={{ marginTop: 4, fontSize: 12, opacity: 0.85 }}>
+                                                  {it.item_type === "leave"
+                                                    ? "休假"
+                                                    : it.item_type === "move"
+                                                    ? "移動"
+                                                    : `${projectName(it.project_id)} · ${stageLabel(it.priority)}`}
+                                                </div>
 
-                                        {it.details && (
-                                          <div style={{ marginTop: 6, fontSize: 12, opacity: 0.9, whiteSpace: "pre-wrap" }}>
-                                            {it.details}
+                                                {it.details && (
+                                                  <div style={{ marginTop: 6, fontSize: 12, opacity: 0.9, whiteSpace: "pre-wrap" }}>
+                                                    {it.details}
+                                                  </div>
+                                                )}
+                                              </div>
+                                            ))}
                                           </div>
                                         )}
-                                      </div>
-                                    ))}
-                                  </div>
-                                )}
-                              </td>
-                            );
-                          })}
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
+                                      </td>
+                                    );
+                                  })}
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  );
+                })}
 
-                <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7, color: "#6b7280" }}>
+                <div style={{ marginTop: 2, fontSize: 12, opacity: 0.7, color: "#6b7280" }}>
                   顏色規則：格子內包含「休假/移動」會整格變黃；卡片右上圓點代表 6 階段（用顏色做區分）。
                 </div>
               </div>
@@ -577,6 +573,7 @@ export default function PlansPage() {
           </div>
         </div>
 
+        {/* Modal */}
         {open && (
           <div style={styles.modalOverlay} onClick={() => !saving && setOpen(false)}>
             <div style={styles.modalCard} onClick={(e) => e.stopPropagation()}>
@@ -595,7 +592,7 @@ export default function PlansPage() {
                       value={formEngineerId}
                       onChange={(e) => setFormEngineerId(e.target.value)}
                       style={styles.input}
-                      disabled={saving || (!isAdmin && !!myEngineerId)} // ✅ 非 admin：鎖定
+                      disabled={saving || (!isAdmin && !!myEngineerId)}
                       title={!isAdmin ? "一般使用者只能編輯自己的行程" : ""}
                     >
                       {engineers.map((e) => (
@@ -604,9 +601,7 @@ export default function PlansPage() {
                         </option>
                       ))}
                     </select>
-                    {!isAdmin && (
-                      <div style={{ fontSize: 12, opacity: 0.65, marginTop: 6 }}>（你只能新增/編輯自己的行程）</div>
-                    )}
+                    {!isAdmin && <div style={{ fontSize: 12, opacity: 0.65, marginTop: 6 }}>（你只能新增/編輯自己的行程）</div>}
                   </div>
 
                   <div>
@@ -710,9 +705,11 @@ const styles: Record<string, React.CSSProperties> = {
   shell: { display: "flex", minHeight: "100vh", backgroundColor: "#f3f4f6" },
   sidebarWrap: { width: 260, flexShrink: 0, backgroundColor: "white", borderRight: "1px solid #e5e7eb" },
   main: { flex: 1, minWidth: 0, padding: 24 },
+
   topbar: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, gap: 12 },
   h1: { fontSize: 20, fontWeight: 600, margin: 0, marginBottom: 6, color: "#111827" },
   sub: { fontSize: 13, color: "#6b7280" },
+
   alert: {
     marginBottom: 16,
     padding: "12px 16px",
@@ -750,10 +747,48 @@ const styles: Record<string, React.CSSProperties> = {
     transition: "all 0.2s",
   },
 
+  weekBlock: {
+    border: "1px solid #e5e7eb",
+    borderRadius: 12,
+    background: "#fff",
+    overflow: "hidden",
+  },
+  weekTitle: {
+    padding: "10px 12px",
+    fontSize: 13,
+    fontWeight: 900,
+    background: "#f8fafc",
+    borderBottom: "1px solid #e5e7eb",
+    color: "#334155",
+  },
+
   table: { borderCollapse: "collapse", minWidth: 1200, width: "100%", background: "#fff" },
-  th: { border: "1px solid #000", padding: 10, background: "#ffe766", textAlign: "center", verticalAlign: "middle", whiteSpace: "nowrap" },
-  tdLeft: { border: "1px solid #000", padding: 10, background: "#fff", fontWeight: 900, width: 160, whiteSpace: "nowrap", verticalAlign: "top" },
+  th: {
+    border: "1px solid #000",
+    padding: 10,
+    background: "#ffe766",
+    textAlign: "center",
+    verticalAlign: "middle",
+    whiteSpace: "nowrap",
+  },
+  tdLeft: {
+    border: "1px solid #000",
+    padding: 10,
+    background: "#fff",
+    fontWeight: 900,
+    width: 160,
+    whiteSpace: "nowrap",
+    verticalAlign: "top",
+  },
   tdCell: { border: "1px solid #000", padding: 10, verticalAlign: "top", minWidth: 150 },
+
+  itemCard: {
+    border: "1px solid #e5e7eb",
+    borderRadius: 10,
+    padding: 10,
+    background: "#fff",
+    cursor: "pointer",
+  },
 
   modalOverlay: {
     position: "fixed",
