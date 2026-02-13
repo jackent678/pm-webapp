@@ -18,12 +18,12 @@ type StageValue = {
   percent: number; // 0-100
   note?: string;
 
-  // ✅ 此階段預估天數（SLA）
+  // ✅ 新增：此階段預估天數（SLA）
   plan_days?: number; // >=0
 };
 
 type ProgressMeta = {
-  // ✅ 整體專案預估天數
+  // ✅ 新增：整體專案預估天數
   project_plan_days?: number; // >=0
 };
 
@@ -43,8 +43,6 @@ type ScheduleItemRow = {
   title: string;
   details: string | null;
   item_type: "work" | "leave" | "move";
-  // ✅ 來自行程規劃：1~6 對應 6 階段（存於 schedule_items.priority）
-  priority?: number | null;
 };
 
 const STAGES: Array<{ key: StageKey; label: string; keywords: string[] }> = [
@@ -163,7 +161,7 @@ export default function ProjectsPage() {
   const [formName, setFormName] = useState("");
   const [formDesc, setFormDesc] = useState("");
 
-  // ✅ 整體預估天數
+  // ✅ 新增：整體預估天數
   const [formProjectPlanDays, setFormProjectPlanDays] = useState<number>(0);
 
   // ✅ 各階段（含 plan_days）
@@ -199,7 +197,7 @@ export default function ProjectsPage() {
     // ✅ 只統計 work 類型；你想「包含 move/leave」也可改這裡
     const { data, error } = await supabase
       .from("schedule_items")
-      .select("id,project_id,work_date,title,details,item_type,priority")
+      .select("id,project_id,work_date,title,details,item_type")
       .in("project_id", projectIds)
       .eq("item_type", "work");
 
@@ -225,17 +223,9 @@ export default function ProjectsPage() {
       if (!byProjectDateSet.has(pid)) byProjectDateSet.set(pid, new Set<string>());
       byProjectDateSet.get(pid)!.add(date);
 
-      // stage
-      // 1) 優先使用行程內「priority(1~6)」的明確指定（由 Plans 頁面選擇階段）
-      // 2) 若沒有，才回退到用文字關鍵字推測（相容舊資料）
-      let sk: StageKey | null = null;
-      const pr = Number(r.priority ?? NaN);
-      if (Number.isFinite(pr) && pr >= 1 && pr <= 6) {
-        sk = STAGES[Math.round(pr) - 1]?.key ?? null;
-      } else {
-        const text = `${r.title ?? ""}\n${r.details ?? ""}`;
-        sk = detectStageFromText(text);
-      }
+      // stage (用文字推測)
+      const text = `${r.title ?? ""}\n${r.details ?? ""}`;
+      const sk = detectStageFromText(text);
       if (sk) {
         if (!byProjectStageDateSet.has(pid)) byProjectStageDateSet.set(pid, new Map());
         const m = byProjectStageDateSet.get(pid)!;
@@ -427,7 +417,9 @@ export default function ProjectsPage() {
         <div style={styles.topbar}>
           <div>
             <h1 style={styles.h1}>專案管理</h1>
-            <div style={styles.sub}>預估天數 / 階段天數（SLA）/ 行程統計天數 / 超時未完成顯示紅色</div>
+            <div style={styles.sub}>
+              預估天數 / 階段天數（SLA）/ 行程統計天數 / 超時未完成顯示紅色
+            </div>
           </div>
 
           <div style={{ display: "flex", gap: 8 }}>
@@ -485,21 +477,10 @@ export default function ProjectsPage() {
 
                           {p.description && <div style={{ marginTop: 6, color: "#374151" }}>{p.description}</div>}
 
-                          {/* ✅ 專案天數：只讓這一行在超時時變紅 + 淡紅底（更容易看出有吃到條件） */}
-                          <div style={{ marginTop: 8, fontSize: 12, color: "#6b7280" }}>
-                            <span
-                              style={{
-                                color: pOver ? "#ef4444" : "#6b7280",
-                                fontWeight: pOver ? 800 : 400,
-                                background: pOver ? "#fee2e2" : "transparent",
-                                padding: pOver ? "1px 6px" : 0,
-                                borderRadius: pOver ? 6 : 0,
-                                display: "inline-block",
-                              }}
-                            >
-                              專案天數：使用 {usedDays} 天
-                              {planDays > 0 ? ` / 預估 ${planDays} 天` : "（未設定預估天數）"}
-                            </span>
+                          {/* ✅ 專案天數：預估 vs 使用 */}
+                          <div style={{ marginTop: 8, fontSize: 12, color: pOver ? "#b91c1c" : "#6b7280" }}>
+                            專案天數：使用 {usedDays} 天
+                            {planDays > 0 ? ` / 預估 ${planDays} 天` : "（未設定預估天數）"}
                           </div>
 
                           <div style={{ marginTop: 6, fontSize: 12, color: "#6b7280" }}>
@@ -547,20 +528,9 @@ export default function ProjectsPage() {
                                     {statusLabel(v.status)}
                                   </div>
 
-                                  {/* ✅ 只讓「使用 X 天 / 預估 Y 天」這一行在超時時變紅 + 淡紅底 */}
-                                  <div style={{ fontSize: 12, marginTop: 2, color: "#6b7280" }}>
-                                    <span
-                                      style={{
-                                        color: overdue ? "#ef4444" : "#6b7280",
-                                        fontWeight: overdue ? 800 : 400,
-                                        background: overdue ? "#fee2e2" : "transparent",
-                                        padding: overdue ? "1px 6px" : 0,
-                                        borderRadius: overdue ? 6 : 0,
-                                        display: "inline-block",
-                                      }}
-                                    >
-                                      使用 {used} 天{plan > 0 ? ` / 預估 ${plan} 天` : ""}
-                                    </span>
+                                  {/* ✅ 天數監控文字 */}
+                                  <div style={{ fontSize: 12, marginTop: 2, color: overdue ? "#b91c1c" : "#6b7280" }}>
+                                    使用 {used} 天{plan > 0 ? ` / 預估 ${plan} 天` : ""}
                                   </div>
                                 </div>
 
@@ -582,8 +552,7 @@ export default function ProjectsPage() {
                       </div>
 
                       <div style={{ marginTop: 10, fontSize: 12, color: "#6b7280" }}>
-                        提醒：各階段「使用天數」優先使用行程規劃的「6 階段」(schedule_items.priority=1~6)；若舊資料未填，才回退用
-                        title/details 關鍵字推測。
+                        提醒：各階段「使用天數」目前用行程內容關鍵字推測（title/details 內含階段名稱或 stage_key）。
                       </div>
                     </div>
                   );

@@ -23,9 +23,7 @@ type ScheduleItemRow = {
   title: string;
   details: string | null;
   item_type: "work" | "leave" | "move";
-  // ✅ 原本用「優先度 1-3」，改為「6 階段進度」(1-6)
-  // 1~6 對應 Projects 的 6 個階段順序（硬體安裝定位 → ... → 教育訓練）
-  priority: 1 | 2 | 3 | 4 | 5 | 6;
+  priority: 1 | 2 | 3;
   sort_order: number;
   created_at: string;
   updated_at: string;
@@ -57,24 +55,10 @@ function weekdayLabel(i: number) {
   return ["一", "二", "三", "四", "五", "六", "日"][i] ?? "";
 }
 
-function clampStage(n: number): 1 | 2 | 3 | 4 | 5 | 6 {
+function clampPriority(n: number): 1 | 2 | 3 {
   if (n <= 1) return 1;
-  if (n >= 6) return 6;
-  // 2~5
-  return Math.round(n) as any;
-}
-
-const STAGE_OPTIONS: Array<{ value: 1 | 2 | 3 | 4 | 5 | 6; label: string }> = [
-  { value: 1, label: "硬體安裝定位" },
-  { value: 2, label: "硬體穩定性調整" },
-  { value: 3, label: "軟體參數設定" },
-  { value: 4, label: "AI參數訓練" },
-  { value: 5, label: "跑料驗證" },
-  { value: 6, label: "教育訓練" },
-];
-
-function stageLabel(n: 1 | 2 | 3 | 4 | 5 | 6) {
-  return STAGE_OPTIONS.find((x) => x.value === n)?.label ?? `階段${n}`;
+  if (n >= 3) return 3;
+  return 2;
 }
 
 export default function PlansPage() {
@@ -104,8 +88,7 @@ export default function PlansPage() {
   const [formProjectId, setFormProjectId] = useState<string | "">("");
   const [formTitle, setFormTitle] = useState<string>("");
   const [formDetails, setFormDetails] = useState<string>("");
-  // ✅ 1~6：6 階段進度
-  const [formPriority, setFormPriority] = useState<1 | 2 | 3 | 4 | 5 | 6>(1);
+  const [formPriority, setFormPriority] = useState<1 | 2 | 3>(2);
   const [saving, setSaving] = useState(false);
 
   async function ensureLoggedIn() {
@@ -289,10 +272,10 @@ export default function PlansPage() {
     return "#fff";
   }
 
-  function badgeColor(p: 1 | 2 | 3 | 4 | 5 | 6) {
-    // 6 階段用 6 色（只做視覺區分，不代表優先度高低）
-    const palette = ["#ef4444", "#f97316", "#eab308", "#22c55e", "#06b6d4", "#3b82f6"];
-    return palette[(p - 1) % palette.length];
+  function badgeColor(p: 1 | 2 | 3) {
+    if (p === 1) return "#e74c3c";
+    if (p === 2) return "#f39c12";
+    return "#2ecc71";
   }
 
   function openNew(engineerId: string, dateISO: string) {
@@ -307,7 +290,7 @@ export default function PlansPage() {
     setFormProjectId("");
     setFormTitle("");
     setFormDetails("");
-    setFormPriority(1);
+    setFormPriority(2);
     setOpen(true);
   }
 
@@ -325,7 +308,7 @@ export default function PlansPage() {
     setFormProjectId(it.project_id ?? "");
     setFormTitle(it.title ?? "");
     setFormDetails(it.details ?? "");
-    setFormPriority(clampStage(it.priority ?? 1));
+    setFormPriority(clampPriority(it.priority ?? 2));
     setOpen(true);
   }
 
@@ -352,7 +335,6 @@ export default function PlansPage() {
         title: formTitle.trim(),
         details: formDetails.trim() ? formDetails.trim() : null,
         item_type: formType,
-        // ✅ priority 欄位改存 1~6 階段
         priority: formPriority,
       };
 
@@ -539,7 +521,7 @@ export default function PlansPage() {
                                               background: badgeColor(it.priority),
                                               flex: "0 0 auto",
                                             }}
-                                            title={`階段：${stageLabel(it.priority)}`}
+                                            title={`優先度 ${it.priority}`}
                                           />
                                         </div>
 
@@ -548,7 +530,7 @@ export default function PlansPage() {
                                             ? "休假"
                                             : it.item_type === "move"
                                             ? "移動"
-                                            : `${projectName(it.project_id)} · ${stageLabel(it.priority)}`}
+                                            : projectName(it.project_id)}
                                         </div>
 
                                         {it.details && (
@@ -570,7 +552,7 @@ export default function PlansPage() {
                 </table>
 
                 <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7, color: "#6b7280" }}>
-                  顏色規則：格子內包含「休假/移動」會整格變黃；卡片右上圓點代表 6 階段（用顏色做區分）。
+                  顏色規則：格子內包含「休假/移動」會整格變黃；卡片右上圓點代表優先度（1紅 2橘 3綠）。
                 </div>
               </div>
             )}
@@ -644,19 +626,16 @@ export default function PlansPage() {
                   </div>
 
                   <div>
-                    <div style={styles.label}>階段</div>
+                    <div style={styles.label}>優先度</div>
                     <select
                       value={String(formPriority)}
-                      onChange={(e) => setFormPriority(clampStage(Number(e.target.value)))}
+                      onChange={(e) => setFormPriority(clampPriority(Number(e.target.value)))}
                       style={styles.input}
-                      disabled={saving || formType !== "work"}
-                      title={formType !== "work" ? "休假/移動不需選階段" : ""}
+                      disabled={saving}
                     >
-                      {STAGE_OPTIONS.map((s) => (
-                        <option key={s.value} value={String(s.value)}>
-                          {s.label}
-                        </option>
-                      ))}
+                      <option value="1">1（高）</option>
+                      <option value="2">2（中）</option>
+                      <option value="3">3（低）</option>
                     </select>
                   </div>
                 </div>
