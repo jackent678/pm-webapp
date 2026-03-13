@@ -32,6 +32,7 @@ export default function Sidebar() {
       { href: "/app/projects", label: "專案管理", icon: "📁" },
       { href: "/app/validations", label: "專案驗證數據", icon: "✅" },
       { href: "/app/plans", label: "行程規劃", icon: "📅" },
+      { href: "/app/export", label: "日報PPT匯出", icon: "📄" },
       { href: "/app/issues", label: "異常狀態列表", icon: "🚨" },
       { href: "/app/admin", label: "主管專區", icon: "🛡️", adminOnly: true },
     ],

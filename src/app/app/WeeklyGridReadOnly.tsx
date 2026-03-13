@@ -215,7 +215,6 @@ export default function WeeklyGridReadOnly() {
       {/* 工具列 */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
         <div style={{ fontWeight: 600, color: "#4b5563" }}>
-          {" "}
           <span style={{ fontSize: 12, opacity: 0.8 }}>
             {isAdmin ? "（管理員：全部）" : "（user）"}
             {myUserId ? "" : "（未登入）"}
@@ -282,9 +281,7 @@ export default function WeeklyGridReadOnly() {
                         <td style={tdLeft}>
                           <div style={{ fontWeight: 900 }}>{eng.name}</div>
                           {eng.phone && <div style={{ fontSize: 12, opacity: 0.75 }}>{eng.phone}</div>}
-                          {!isAdmin && (
-                            <div style={{ fontSize: 11, opacity: 0.55, marginTop: 6 }}></div>
-                          )}
+                          {!isAdmin && <div style={{ fontSize: 11, opacity: 0.55, marginTop: 6 }}></div>}
                         </td>
 
                         {daysThis.map((d, idx) => {
@@ -338,19 +335,6 @@ export default function WeeklyGridReadOnly() {
                                           ? "移動"
                                           : projectName(it.project_id)}
                                       </div>
-
-                                      {it.details && (
-                                        <div
-                                          style={{
-                                            marginTop: 6,
-                                            fontSize: 12,
-                                            opacity: 0.9,
-                                            whiteSpace: "pre-wrap",
-                                          }}
-                                        >
-                                          {it.details}
-                                        </div>
-                                      )}
                                     </div>
                                   ))}
                                 </div>
@@ -469,19 +453,6 @@ export default function WeeklyGridReadOnly() {
                                           ? "移動"
                                           : projectName(it.project_id)}
                                       </div>
-
-                                      {it.details && (
-                                        <div
-                                          style={{
-                                            marginTop: 6,
-                                            fontSize: 12,
-                                            opacity: 0.9,
-                                            whiteSpace: "pre-wrap",
-                                          }}
-                                        >
-                                          {it.details}
-                                        </div>
-                                      )}
                                     </div>
                                   ))}
                                 </div>

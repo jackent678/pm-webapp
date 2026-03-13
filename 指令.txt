@@ -1,0 +1,8 @@
+npm run dev
+
+部屬指令
+git add .
+git commit -m "fix account prerender build"
+git push
+
+ python -m PyInstaller --clean --noconfirm --onedir --windowed --icon=app.ico omr_gui2.py
